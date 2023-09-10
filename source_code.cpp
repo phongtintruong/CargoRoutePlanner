@@ -17,6 +17,7 @@
 using namespace std;
 
 const int maxC = 1500;
+const int maxIter = 25000;
 
 struct Query
 {
@@ -55,9 +56,16 @@ double d[maxC][maxC];
 int trace[maxC][maxC];
 Truck truck[maxC];
 Query q[maxC];
+Query best_q[maxC];
+
+double maxD = -1;
+int maxT = -1;
 
 vector<int> truck_q[maxC];
+vector<int> best_truck_q[maxC];
 int q_mask[maxC], truck_mask[maxC];
+
+mt19937 rng(chrono::steady_clock::now().time_since_epoch().count());
 
 // UTILITIES //
 int str2int(string s)
@@ -113,9 +121,15 @@ bool Equal(double a, double b, double epsi = 1e-8)
     return (Abs(a - b) <= epsi);
 }
 
+double Q_METRIC(Query q)
+{
+    return (double) q.e_wd.SE / maxT + 0.01 * (double) d[q.s][q.e] / maxD;
+}
+
 bool SORT_Q(Query q1, Query q2)
 {
-    return (q1.s_wd.FI < q2.s_wd.FI || (q1.s_wd.FI == q2.s_wd.FI && q1.e_wd.SE < q2.e_wd.SE));
+    return (Q_METRIC(q1) < Q_METRIC(q2));
+    // return (q1.s_wd.FI < q2.s_wd.FI || (q1.s_wd.FI == q2.s_wd.FI && q1.e_wd.SE < q2.e_wd.SE));
 }
 
 bool SORT_TRUCK(Truck t1, Truck t2)
@@ -144,6 +158,21 @@ bool Check_truck_q(Truck t, Query q, Truck_state ts)
     if(fde > t.wd.SE) return false;
     
     return true;
+}
+
+int GetFinTime(Truck t, Query q, Truck_state ts)
+{
+    int tmp = ts.cur_time;
+    
+    tmp += ceil(d[ts.cur_hub][q.s] / t.vel);
+    tmp = max(ts.cur_time, q.s_wd.FI);
+    tmp += q.sp;
+
+    tmp += ceil(d[q.s][q.e] / t.vel);
+    tmp = max(ts.cur_time, q.e_wd.FI);
+    tmp += q.sd;
+    
+    return tmp;
 }
 
 vector<int> Trace(int u, int v)
@@ -201,6 +230,8 @@ void Input()
 
         cin >> E >> L;
         q[i].e_wd = mp(hms2sec(E), hms2sec(L));
+        
+        maxT = max(maxT, hms2sec(L));
     }
 
     return;
@@ -222,6 +253,10 @@ void Floyd()
             }
         }
     }
+    
+    for(int i=1; i<=M; ++i)
+        for(int j=1; j<=M; ++j) maxD = max(maxD, d[i][j]);
+        
     return;
 }
 
@@ -234,6 +269,42 @@ void Init()
     return;
 }
 // END OF INITIALIZE //
+
+// GENERATOR //
+int Rand(int l,int r)
+{
+	return l + rng() % (r-l+1);
+}
+
+void Q_ptb(int cnt)
+{
+    // Q - perturbation
+    for(int i=1; i<=cnt; ++i)
+    {
+        int l = Rand(N/4, N/2);
+        int r = Rand(3*N/4, N);
+        swap(q[l], q[r]);
+    }
+    return;
+}
+// END OF GENERATOR //
+
+// EVALUATE //
+void Clear()
+{
+    memset(q_mask, 0, sizeof(q_mask));
+    memset(truck_mask, 0, sizeof(truck_mask));
+    for(int i=1; i<=K; ++i) truck_q[i].clear();
+    return;
+}
+
+int GetLoss()
+{
+    int cnt = 0;
+    for(int i=1; i<=N; ++i) cnt += (q_mask[i] == 1);
+    return -cnt;
+}
+// END OF EVALUATE //
 
 // SOLUTION //
 void Solve()
@@ -253,13 +324,15 @@ void Solve()
 
         int truck_id = -1;
         Truck_state ts;
+        int best_fintime = 1e5;
         for(int i=1; i<=K; ++i)
         {
             ts.cur_time = truck[i].wd.FI;
             ts.cur_hub = truck[i].p;
-            if(truck_mask[i] == 0 && Check_truck_q(truck[i], q[q_id], ts))
+            if(truck_mask[i] == 0 && Check_truck_q(truck[i], q[q_id], ts) && GetFinTime(truck[i], q[q_id], ts) < best_fintime)
             {
                 truck_id = i;
+                best_fintime = GetFinTime(truck[i], q[q_id], ts);
                 break;
             }
         }
@@ -313,6 +386,52 @@ void Solve()
     }
 }
 
+void UpdateSol()
+{
+    copy(q+1, q+1+N, best_q+1);
+    for(int i=1; i<=K; ++i)
+    {
+        best_truck_q[i].clear();
+        for(int j=0; j<truck_q[i].size(); ++j) best_truck_q[i].pb(truck_q[i][j]);
+    }
+}
+
+void MultiSolve()
+{
+    Solve();
+    int best_loss = GetLoss();
+    UpdateSol();
+    Clear();
+    // cerr << best_loss << el;
+
+    for(int i=1; i<=maxIter; ++i)
+    {
+        copy(best_q+1, best_q+1+N, q+1);
+        int cnt = Rand(5, 10);
+        Q_ptb(cnt);
+        Solve();
+        
+        int new_loss = GetLoss();
+        if(new_loss < best_loss) 
+        {
+            best_loss = new_loss;
+            // cerr << new_loss << el;
+            UpdateSol();
+        }
+
+        Clear();
+    }
+
+    copy(best_q+1, best_q+1+N, q+1);
+    for(int i=1; i<=K; ++i)
+    {
+        truck_q[i].clear();
+        for(int j=0; j<best_truck_q[i].size(); ++j) truck_q[i].pb(best_truck_q[i][j]);
+    }
+}
+// END OF SOLUTION //
+
+// EVALUATE //
 void Print_truck_sol(int id)
 {
     Truck cur_truck = truck[id];
@@ -413,6 +532,7 @@ void PrintResult()
     }
     return;
 }
+// END OF EVALUATE //
 
 void Debug()
 {
@@ -426,8 +546,7 @@ int main()
     cin.tie(NULL);
     cout.tie(NULL);
     Init();
-    Solve();
-    // Debug();
+    MultiSolve();
     PrintResult();
     return 0;
 }
